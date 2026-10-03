@@ -1,0 +1,45 @@
+{
+  "name": "incident-dojo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A browser-based incident response training game: investigate fictional Linux/AWS outages in a pseudo terminal, recover, report the root cause, and get an auto-generated postmortem.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "validate:scenarios": "tsx scripts/validate-scenarios.ts",
+    "validate:power": "tsx scripts/validate-power.ts",
+    "mcp": "tsx mcp-server/src/index.ts",
+    "audit": "npm audit --audit-level=high",
+    "check": "npm run typecheck && npm run lint && npm run validate:scenarios && npm run validate:power && vitest --run"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.4",
+    "eslint": "10.12.0",
+    "fast-check": "4.10.2",
+    "globals": "17.13.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.0",
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "zod": "4.6.5"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
