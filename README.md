@@ -2,7 +2,7 @@
 
 [日本語](#日本語) | [English](#english)
 
-**Play:** `https://<github-user>.github.io/incident-dojo/`
+**Play:** https://yamamoto-r-1205.github.io/incident-dojo/
 
 ---
 

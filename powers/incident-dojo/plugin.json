@@ -18,5 +18,7 @@
     "sre",
     "on-call"
   ],
+  "homepage": "https://yamamoto-r-1205.github.io/incident-dojo/",
+  "repository": "https://github.com/yamamoto-r-1205/incident-dojo",
   "license": "MIT"
 }
