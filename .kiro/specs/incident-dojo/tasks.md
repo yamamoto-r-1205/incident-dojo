@@ -57,6 +57,8 @@
 
 - [ ] 8. Cloud session contribution (Kiro Web) merged via PR
 
-- [ ] 9. Scenarios 6–10 (cert expiry, DNS, fd exhaustion, EBS full, inode exhaustion)
+- [ ] 9. Scenarios 6–10 (cert expiry, DNS, fd exhaustion, EBS full, inode exhaustion) (optional)
 
-- [x] 10. README (ja/en), CHALLENGE.md, final verification
+- [ ] 10. README (ja/en), CHALLENGE.md, final verification
+  - [x] 10.1 README, CHALLENGE.md, LICENSE
+  - [ ] 10.2 Public repo, GitHub Pages live, entry form submitted
