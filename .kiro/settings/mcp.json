@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "incident-dojo": {
+      "command": "npx",
+      "args": ["--no-install", "tsx", "mcp-server/src/index.ts"],
+      "env": {},
+      "disabled": false,
+      "autoApprove": ["list_scenarios", "get_scenario", "validate_scenario"]
+    }
+  }
+}
