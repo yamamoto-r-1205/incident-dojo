@@ -1,0 +1,13 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Lint TypeScript on save",
+      "description": "Run ESLint (including the engine purity and no-innerHTML rules) whenever the agent saves a TypeScript file.",
+      "trigger": "PostFileSave",
+      "matcher": "\\.(ts|mjs|js)$",
+      "action": { "type": "command", "command": "npm run -s lint" },
+      "timeout": 90
+    }
+  ]
+}

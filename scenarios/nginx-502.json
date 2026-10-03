@@ -1,0 +1,221 @@
+{
+  "id": "nginx-502",
+  "version": 1,
+  "title": {
+    "ja": "デプロイ直後に 502 Bad Gateway が多発",
+    "en": "502 Bad Gateway right after a deploy"
+  },
+  "briefing": {
+    "ja": "14:02 に Web アプリの定期デプロイが完了しました。その直後から「サイトが 502 になる」という問い合わせが相次いでいます。あなたは当番エンジニアとして web-01 にログインしました。サービスを復旧させ、根本原因を報告してください。まずは `help` を入力してみましょう。",
+    "en": "A routine web app deploy finished at 14:02. Since then, users keep reporting \"502 Bad Gateway\". You are the on-call engineer and just logged in to web-01. Recover the service and report the root cause. Type `help` to get started."
+  },
+  "severity": "P2",
+  "category": "linux",
+  "host": "web-01",
+  "par": 8,
+  "initialFlags": {
+    "app_running": false,
+    "env_restored": false
+  },
+  "commands": [
+    {
+      "id": "curl-ok",
+      "match": ["curl", "curl -I http://localhost", "curl -I localhost", "curl http://localhost", "curl localhost"],
+      "matchType": "prefix",
+      "when": { "app_running": true },
+      "output": "HTTP/1.1 200 OK\nServer: nginx/1.24.0\nContent-Type: text/html; charset=utf-8\nX-App-Version: 2026.10.05-1"
+    },
+    {
+      "id": "curl-502",
+      "match": ["curl", "curl -I http://localhost", "curl -I localhost", "curl http://localhost", "curl localhost"],
+      "matchType": "prefix",
+      "output": "HTTP/1.1 502 Bad Gateway\nServer: nginx/1.24.0\nContent-Type: text/html\nContent-Length: 157",
+      "note": { "ja": "502 を再現", "en": "reproduced the 502" }
+    },
+    {
+      "id": "nginx-status",
+      "match": ["systemctl status nginx", "systemctl status nginx.service"],
+      "output": "● nginx.service - A high performance web server and a reverse proxy server\n     Loaded: loaded (/lib/systemd/system/nginx.service; enabled)\n     Active: active (running) since Mon 2026-10-05 09:12:44 UTC; 5h ago\n   Main PID: 812 (nginx)",
+      "note": { "ja": "nginx 自体は稼働中", "en": "nginx itself is running" }
+    },
+    {
+      "id": "nginx-error-log",
+      "match": [
+        "tail /var/log/nginx/error.log",
+        "tail -n 20 /var/log/nginx/error.log",
+        "tail -n 50 /var/log/nginx/error.log",
+        "tail -n 100 /var/log/nginx/error.log",
+        "tail -f /var/log/nginx/error.log",
+        "cat /var/log/nginx/error.log",
+        "less /var/log/nginx/error.log"
+      ],
+      "output": "2026/10/05 14:03:11 [error] 815#815: *1201 connect() failed (111: Connection refused) while connecting to upstream, client: 192.0.2.10, server: example.com, request: \"GET / HTTP/1.1\", upstream: \"http://127.0.0.1:8080/\"\n2026/10/05 14:03:12 [error] 815#815: *1202 connect() failed (111: Connection refused) while connecting to upstream, client: 192.0.2.24, server: example.com, request: \"GET /login HTTP/1.1\", upstream: \"http://127.0.0.1:8080/login\"",
+      "note": { "ja": "upstream(127.0.0.1:8080) への接続拒否を確認", "en": "upstream 127.0.0.1:8080 refuses connections" }
+    },
+    {
+      "id": "ss-up",
+      "match": ["ss -tlnp", "ss -tln", "ss -lnt", "ss -lntp", "netstat -tlnp", "netstat -lnt"],
+      "when": { "app_running": true },
+      "output": "State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port  Process\nLISTEN  0       511     0.0.0.0:80          0.0.0.0:*          users:((\"nginx\",pid=812,fd=6))\nLISTEN  0       128     127.0.0.1:8080      0.0.0.0:*          users:((\"app\",pid=4120,fd=3))"
+    },
+    {
+      "id": "ss-down",
+      "match": ["ss -tlnp", "ss -tln", "ss -lnt", "ss -lntp", "netstat -tlnp", "netstat -lnt"],
+      "output": "State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port  Process\nLISTEN  0       511     0.0.0.0:80          0.0.0.0:*          users:((\"nginx\",pid=812,fd=6))\nLISTEN  0       128     0.0.0.0:22          0.0.0.0:*          users:((\"sshd\",pid=701,fd=3))",
+      "note": { "ja": "8080 を LISTEN しているプロセスがない", "en": "nothing is listening on 8080" }
+    },
+    {
+      "id": "app-status-up",
+      "match": ["systemctl status app", "systemctl status app.service"],
+      "when": { "app_running": true },
+      "output": "● app.service - Example web application\n     Loaded: loaded (/etc/systemd/system/app.service; enabled)\n     Active: active (running) since Mon 2026-10-05 14:21:07 UTC; 4s ago\n   Main PID: 4120 (app)"
+    },
+    {
+      "id": "app-status-failed",
+      "match": ["systemctl status app", "systemctl status app.service"],
+      "output": "× app.service - Example web application\n     Loaded: loaded (/etc/systemd/system/app.service; enabled)\n     Active: failed (Result: exit-code) since Mon 2026-10-05 14:02:31 UTC; 18min ago\n    Process: 3988 ExecStart=/opt/app/bin/app --env-file /etc/app/app.env (code=exited, status=1/FAILURE)\n\nOct 05 14:02:31 web-01 systemd[1]: app.service: Start request repeated too quickly.\nOct 05 14:02:31 web-01 systemd[1]: app.service: Failed with result 'exit-code'.",
+      "note": { "ja": "app.service が 14:02 から failed", "en": "app.service failed since 14:02" }
+    },
+    {
+      "id": "app-journal",
+      "match": ["journalctl -u app", "journalctl -u app.service", "journalctl -xeu app.service", "journalctl -xeu app"],
+      "matchType": "prefix",
+      "output": "Oct 05 14:02:29 web-01 app[3988]: Loading configuration from /etc/app/app.env\nOct 05 14:02:29 web-01 app[3988]: FATAL: required environment variable DATABASE_URL is not set\nOct 05 14:02:29 web-01 systemd[1]: app.service: Main process exited, code=exited, status=1/FAILURE\nOct 05 14:02:31 web-01 systemd[1]: app.service: Start request repeated too quickly.",
+      "note": { "ja": "DATABASE_URL 未設定で起動失敗しているログを発見", "en": "found: app exits because DATABASE_URL is not set" }
+    },
+    {
+      "id": "ls-etc-app",
+      "match": ["ls /etc/app", "ls -l /etc/app", "ls -la /etc/app", "ls -al /etc/app", "ll /etc/app"],
+      "output": "-rw-r----- 1 root app 96 Oct  5 14:02 app.env\n-rw-r----- 1 root app 171 Oct  4 09:30 app.env.bak"
+    },
+    {
+      "id": "cat-env-restored",
+      "match": ["cat /etc/app/app.env"],
+      "when": { "env_restored": true },
+      "output": "APP_PORT=8080\nLOG_LEVEL=info\nDATABASE_URL=postgres://app:********@db-01.example.com:5432/app"
+    },
+    {
+      "id": "cat-env",
+      "match": ["cat /etc/app/app.env"],
+      "output": "APP_PORT=8080\nLOG_LEVEL=info\n# DATABASE_URL=<set me>"
+    },
+    {
+      "id": "cat-env-bak",
+      "match": ["cat /etc/app/app.env.bak"],
+      "output": "APP_PORT=8080\nLOG_LEVEL=info\nDATABASE_URL=postgres://app:********@db-01.example.com:5432/app"
+    },
+    {
+      "id": "diff-env",
+      "match": ["diff /etc/app/app.env.bak /etc/app/app.env", "diff /etc/app/app.env /etc/app/app.env.bak", "diff -u /etc/app/app.env.bak /etc/app/app.env"],
+      "output": "3c3\n< DATABASE_URL=postgres://app:********@db-01.example.com:5432/app\n---\n> # DATABASE_URL=<set me>",
+      "note": { "ja": "デプロイで DATABASE_URL がテンプレート値に上書きされたことを特定", "en": "the deploy overwrote DATABASE_URL with a template placeholder" }
+    },
+    {
+      "id": "restore-env",
+      "match": ["cp /etc/app/app.env.bak /etc/app/app.env", "cp -p /etc/app/app.env.bak /etc/app/app.env", "cp -a /etc/app/app.env.bak /etc/app/app.env"],
+      "output": "",
+      "effects": { "env_restored": true },
+      "note": { "ja": "設定ファイルをバックアップから復元", "en": "restored the env file from backup" }
+    },
+    {
+      "id": "restart-app-ok",
+      "match": ["systemctl restart app", "systemctl restart app.service", "systemctl start app", "systemctl start app.service"],
+      "when": { "env_restored": true },
+      "output": "",
+      "effects": { "app_running": true },
+      "note": { "ja": "app.service を再起動", "en": "restarted app.service" }
+    },
+    {
+      "id": "restart-app-fail",
+      "match": ["systemctl restart app", "systemctl restart app.service", "systemctl start app", "systemctl start app.service"],
+      "output": "Job for app.service failed because the control process exited with error code.\nSee \"systemctl status app.service\" and \"journalctl -xeu app.service\" for details.",
+      "note": { "ja": "原因未解消のまま再起動 → 失敗", "en": "restart without fixing the cause failed" }
+    },
+    {
+      "id": "restart-nginx",
+      "match": ["systemctl restart nginx", "systemctl reload nginx", "systemctl restart nginx.service"],
+      "output": ""
+    },
+    {
+      "id": "uptime",
+      "match": ["uptime"],
+      "output": " 14:21:03 up 41 days,  3:02,  1 user,  load average: 0.08, 0.11, 0.09"
+    },
+    {
+      "id": "df",
+      "match": ["df -h", "df"],
+      "output": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/xvda1       20G  6.2G   14G  31% /"
+    },
+    {
+      "id": "free",
+      "match": ["free -h", "free -m", "free"],
+      "output": "               total        used        free      shared  buff/cache   available\nMem:           3.8Gi       0.9Gi       1.6Gi        12Mi       1.3Gi       2.6Gi\nSwap:             0B          0B          0B"
+    },
+    {
+      "id": "vi-env",
+      "match": ["vi", "vim", "nano"],
+      "matchType": "prefix",
+      "output": "Interactive editors are not available in the dojo. Use cp, diff or cat instead."
+    },
+    {
+      "id": "rm-nginx-logs",
+      "match": ["rm -rf /var/log/nginx", "rm -rf /var/log/nginx/", "rm -rf /var/log/nginx/*", "rm /var/log/nginx/error.log"],
+      "output": "",
+      "danger": {
+        "penalty": 20,
+        "message": {
+          "ja": "障害調査中にログを消すと証拠が失われ、原因究明もポストモーテムもできなくなります。",
+          "en": "Deleting logs during an incident destroys the evidence you need for diagnosis and the postmortem."
+        }
+      }
+    },
+    {
+      "id": "reboot",
+      "match": ["reboot", "shutdown -r now", "systemctl reboot"],
+      "output": "Connection to web-01 closed by remote host.\n... (reconnected after 90s) ...",
+      "danger": {
+        "penalty": 15,
+        "message": {
+          "ja": "原因を特定せずに再起動しても設定ミスは直りません。停止時間が延び、メモリ上の手がかりも失われます。",
+          "en": "Rebooting without a diagnosis does not fix a bad config. It extends the outage and wipes in-memory clues."
+        }
+      }
+    }
+  ],
+  "recovery": { "app_running": true },
+  "hints": [
+    {
+      "ja": "nginx 自体は動いているようです。502 はリバースプロキシの裏側（upstream）の問題であることが多いです。",
+      "en": "nginx itself seems fine. A 502 usually means the upstream behind the reverse proxy is the problem."
+    },
+    {
+      "ja": "アプリ本体のサービス `app` の状態とログを確認しましょう（systemctl status / journalctl -u）。",
+      "en": "Check the state and logs of the application service `app` (systemctl status / journalctl -u)."
+    },
+    {
+      "ja": "/etc/app に前日のバックアップがあります。diff で比べ、cp で戻してから再起動しましょう。",
+      "en": "There is a backup from yesterday in /etc/app. Compare with diff, restore with cp, then restart."
+    }
+  ],
+  "rootCauses": [
+    { "id": "nginx-config", "label": { "ja": "nginx の設定ミス", "en": "nginx misconfiguration" } },
+    { "id": "app-env-missing", "label": { "ja": "デプロイで環境変数 DATABASE_URL が消え、アプリが起動できなかった", "en": "The deploy dropped DATABASE_URL so the app could not start" } },
+    { "id": "db-down", "label": { "ja": "データベースサーバーの停止", "en": "Database server outage" } },
+    { "id": "port-conflict", "label": { "ja": "別プロセスによる 8080 番ポートの競合", "en": "Another process occupying port 8080" } }
+  ],
+  "correctRootCause": "app-env-missing",
+  "postmortem": {
+    "summary": {
+      "ja": "14:02 のデプロイで /etc/app/app.env がテンプレートで上書きされ、DATABASE_URL が欠落した。アプリ（app.service）が起動失敗し、nginx の upstream が不在となって 502 が返り続けた。",
+      "en": "The 14:02 deploy overwrote /etc/app/app.env with a template, dropping DATABASE_URL. app.service failed to start, leaving nginx without an upstream and returning 502."
+    },
+    "fix": {
+      "ja": "app.env.bak から設定ファイルを復元し、app.service を再起動した。",
+      "en": "Restored the env file from app.env.bak and restarted app.service."
+    },
+    "prevention": {
+      "ja": "- 環境固有の設定をデプロイ成果物から分離する（Parameter Store / Secrets Manager 等）\n- 起動時の必須設定チェックをデプロイパイプラインのスモークテストに追加する\n- app.service の failed 状態を監視し、デプロイ直後に自動ロールバックする",
+      "en": "- Keep environment-specific settings out of deploy artifacts (Parameter Store / Secrets Manager, etc.)\n- Add a required-config check to the deploy pipeline smoke tests\n- Alert on app.service entering the failed state and roll back automatically after deploys"
+    }
+  }
+}

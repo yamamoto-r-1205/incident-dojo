@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Run full check after each spec task",
+      "description": "After a spec task is marked complete, run typecheck + lint + validators + tests so a task is never 'done' while red.",
+      "trigger": "PostTaskExec",
+      "action": { "type": "command", "command": "npm run -s check" },
+      "timeout": 300
+    }
+  ]
+}

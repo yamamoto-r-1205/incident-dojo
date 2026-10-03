@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Validate scenario on save",
+      "description": "When the agent saves or creates a scenario JSON, run the schema + reachability validator. Non-zero exit sends the issues back to the agent so it fixes them before moving on.",
+      "trigger": "PostFileSave",
+      "matcher": "scenarios/[^/]+\\.json$",
+      "action": { "type": "command", "command": "npm run -s validate:scenarios" },
+      "timeout": 60
+    },
+    {
+      "name": "Validate scenario on create",
+      "description": "Same check for newly created scenario files.",
+      "trigger": "PostFileCreate",
+      "matcher": "scenarios/[^/]+\\.json$",
+      "action": { "type": "command", "command": "npm run -s validate:scenarios" },
+      "timeout": 60
+    }
+  ]
+}

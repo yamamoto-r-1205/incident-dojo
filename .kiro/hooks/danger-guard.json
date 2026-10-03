@@ -1,0 +1,13 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Danger guard for shell commands",
+      "description": "Block rm -rf, git push --force, git reset --hard, git clean -f and sudo issued by the agent (exit 2). Same philosophy as the in-game safety net.",
+      "trigger": "PreToolUse",
+      "matcher": "execute_bash|shell",
+      "action": { "type": "command", "command": "node scripts/danger-guard.mjs" },
+      "timeout": 10
+    }
+  ]
+}
