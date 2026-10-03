@@ -12,7 +12,8 @@ import { getScenario, LIMITS, listScenarios, simulateRun, validateScenarioJson }
 
 // ---- Configuration ----
 
-const SCENARIO_DIR = process.env.INCIDENT_DOJO_SCENARIOS ?? DEFAULT_SCENARIO_DIR;
+// `||` rather than `??`: launchers may pass an empty string for an unset variable.
+const SCENARIO_DIR = process.env.INCIDENT_DOJO_SCENARIOS || DEFAULT_SCENARIO_DIR;
 const idParam = z.string().regex(/^[a-z0-9-]+$/).describe('Scenario id, e.g. "nginx-502"');
 const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
 

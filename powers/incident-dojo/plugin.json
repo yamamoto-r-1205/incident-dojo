@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "incident-dojo",
+  "version": "1.0.0",
+  "description": "Author, validate and dry-run incident response training scenarios for Incident Dojo. Bundles a scenario-authoring skill (incident patterns, schema cheatsheet, postmortem template) and the read-only incident-dojo MCP server.",
+  "author": {
+    "name": "Incident Dojo contributors"
+  },
+  "keywords": [
+    "incident",
+    "incident-response",
+    "障害対応",
+    "障害シナリオ",
+    "postmortem",
+    "ポストモーテム",
+    "scenario",
+    "incident-dojo",
+    "sre",
+    "on-call"
+  ],
+  "license": "MIT"
+}
