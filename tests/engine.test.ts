@@ -92,3 +92,33 @@ describe('nginx-502 walkthrough', () => {
     expect(renderPostmortem(scenario, state, 'en')).toContain('`` echo `id` ``');
   });
 });
+
+describe('scenario traps (the obvious action must not recover)', () => {
+  it('disk-full: rm of an open log does not free space until the process restarts', () => {
+    const s = byId('disk-full');
+    const afterRm = run(s, ['rm /var/log/app/app.log', 'df -h']);
+    expect(afterRm.state.phase).toBe('investigating');
+    expect(afterRm.output.map((l) => l.text).join('\n')).toContain('100% /');
+    expect(run(s, ['rm /var/log/app/app.log', 'truncate -s 0 /var/log/app/app.log']).state.phase).toBe('investigating');
+    expect(run(s, ['rm /var/log/app/app.log', 'systemctl restart app']).state.phase).toBe('recovered');
+  });
+
+  it('oom-killer: restarting without rolling back the config keeps crashing', () => {
+    const s = byId('oom-killer');
+    expect(run(s, ['systemctl restart api', 'fallocate -l 4G /swapfile']).state.phase).toBe('investigating');
+  });
+
+  it('alb-unhealthy: opening 8080 to 0.0.0.0/0 is penalized and does not recover', () => {
+    const s = byId('alb-unhealthy');
+    const { state } = run(s, ['aws ec2 authorize-security-group-ingress --group-id sg-0ddd3333eeee4444f --protocol tcp --port 8080 --cidr 0.0.0.0/0']);
+    expect(state.phase).toBe('investigating');
+    expect(state.dangerPenalty).toBe(25);
+  });
+
+  it('rds-max-connections: restarting on the leaking release or rebooting the DB does not recover', () => {
+    const s = byId('rds-max-connections');
+    const { state } = run(s, ['systemctl restart app', 'aws rds reboot-db-instance --db-instance-identifier db-01']);
+    expect(state.phase).toBe('investigating');
+    expect(state.dangerPenalty).toBe(25);
+  });
+});

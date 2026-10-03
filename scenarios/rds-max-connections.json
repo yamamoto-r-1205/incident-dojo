@@ -1,0 +1,206 @@
+{
+  "id": "rds-max-connections",
+  "version": 1,
+  "title": {
+    "ja": "RDS に接続できない：too many clients",
+    "en": "Cannot connect to RDS: too many clients"
+  },
+  "briefing": {
+    "ja": "11:00 にアプリの v2.8.0 をリリースしました。11:40 頃からログインと決済が 500 エラーになり始めています。DB は Amazon RDS for PostgreSQL（アカウント 123456789012）です。アプリサーバー app-02 にログインし、サービスを復旧させ、根本原因を報告してください。",
+    "en": "Release v2.8.0 of the app went out at 11:00. Since about 11:40 login and checkout fail with 500. The database is Amazon RDS for PostgreSQL (account 123456789012). Log in to app server app-02, recover the service and report the root cause."
+  },
+  "severity": "P2",
+  "category": "aws",
+  "host": "app-02",
+  "par": 9,
+  "initialFlags": {
+    "rolled_back": false,
+    "connections_released": false
+  },
+  "commands": [
+    {
+      "id": "curl-ok",
+      "match": ["curl"],
+      "matchType": "prefix",
+      "when": { "connections_released": true, "rolled_back": true },
+      "output": "HTTP/1.1 200 OK\nContent-Type: application/json\nX-App-Version: 2.7.3\n\n{\"status\":\"ok\",\"db\":\"ok\"}"
+    },
+    {
+      "id": "curl-500",
+      "match": ["curl"],
+      "matchType": "prefix",
+      "output": "HTTP/1.1 500 Internal Server Error\nContent-Type: application/json\nX-App-Version: 2.8.0\n\n{\"status\":\"error\",\"db\":\"unavailable\"}"
+    },
+    {
+      "id": "journal-app",
+      "match": ["journalctl -u app", "journalctl -u app.service", "journalctl -xeu app", "tail /var/log/app/app.log", "tail -n 50 /var/log/app/app.log", "tail -f /var/log/app/app.log"],
+      "matchType": "prefix",
+      "output": "Oct 05 11:41:07 app-02 app[5120]: ERROR db: FATAL: sorry, too many clients already\nOct 05 11:41:07 app-02 app[5120]: WARN pool(orders): connection acquired 1823s ago and never released (checkout.finalize)\nOct 05 11:41:08 app-02 app[5120]: WARN pool(orders): connection acquired 1790s ago and never released (checkout.finalize)\nOct 05 11:41:08 app-02 app[5120]: ERROR POST /checkout 500 (db unavailable)",
+      "note": { "ja": "too many clients と、checkout.finalize でコネクションが返却されていない警告を発見", "en": "found \"too many clients\" and warnings that checkout.finalize never releases connections" }
+    },
+    {
+      "id": "psql",
+      "match": ["psql"],
+      "matchType": "prefix",
+      "when": { "connections_released": false },
+      "output": "psql: error: connection to server at \"db-01.cluster-abc123.ap-northeast-1.rds.amazonaws.com\" (10.0.20.15), port 5432 failed: FATAL:  sorry, too many clients already"
+    },
+    {
+      "id": "psql-ok",
+      "match": ["psql"],
+      "matchType": "prefix",
+      "output": " count\n-------\n    46\n(1 row)"
+    },
+    {
+      "id": "ss-db",
+      "match": ["ss -tnp", "ss -tan", "ss -s", "netstat -tnp"],
+      "when": { "connections_released": false },
+      "output": "Total: 452\nTCP:   431 (estab 418, closed 3, orphaned 0, timewait 2)\n\n... 404 ESTAB connections from app (pid 5120) to 10.0.20.15:5432 ...",
+      "note": { "ja": "app-02 1台から DB へ 404 本の接続", "en": "404 connections from app-02 alone to the DB" }
+    },
+    {
+      "id": "ss-db-ok",
+      "match": ["ss -tnp", "ss -tan", "ss -s", "netstat -tnp"],
+      "output": "Total: 71\nTCP:   52 (estab 39, closed 3, orphaned 0, timewait 6)\n\n... 20 ESTAB connections from app (pid 6011) to 10.0.20.15:5432 ..."
+    },
+    {
+      "id": "rds-describe",
+      "match": ["aws rds describe-db-instances", "aws rds describe-db-clusters"],
+      "matchType": "prefix",
+      "output": "{\n  \"DBInstances\": [{\n    \"DBInstanceIdentifier\": \"db-01\",\n    \"DBInstanceClass\": \"db.t4g.large\",\n    \"Engine\": \"postgres\",\n    \"DBInstanceStatus\": \"available\",\n    \"MultiAZ\": true,\n    \"DBParameterGroups\": [{ \"DBParameterGroupName\": \"app-pg16\", \"ParameterApplyStatus\": \"in-sync\" }]\n  }]\n}",
+      "note": { "ja": "RDS 自体は available、フェイルオーバーもなし", "en": "RDS itself is available, no failover" }
+    },
+    {
+      "id": "rds-events",
+      "match": ["aws rds describe-events"],
+      "matchType": "prefix",
+      "output": "{\n  \"Events\": []\n}"
+    },
+    {
+      "id": "cw-connections-ok",
+      "match": ["aws cloudwatch get-metric-statistics", "aws cloudwatch describe-alarms"],
+      "matchType": "prefix",
+      "when": { "connections_released": true },
+      "output": "{\n  \"Label\": \"DatabaseConnections\",\n  \"Datapoints\": [\n    { \"Timestamp\": \"2026-10-05T11:40:00Z\", \"Maximum\": 410.0 },\n    { \"Timestamp\": \"2026-10-05T11:55:00Z\", \"Maximum\": 46.0 }\n  ]\n}"
+    },
+    {
+      "id": "cw-connections",
+      "match": ["aws cloudwatch get-metric-statistics", "aws cloudwatch describe-alarms"],
+      "matchType": "prefix",
+      "output": "{\n  \"Label\": \"DatabaseConnections\",\n  \"Datapoints\": [\n    { \"Timestamp\": \"2026-10-05T10:50:00Z\", \"Maximum\": 42.0 },\n    { \"Timestamp\": \"2026-10-05T11:10:00Z\", \"Maximum\": 131.0 },\n    { \"Timestamp\": \"2026-10-05T11:25:00Z\", \"Maximum\": 268.0 },\n    { \"Timestamp\": \"2026-10-05T11:40:00Z\", \"Maximum\": 410.0 }\n  ]\n}",
+      "note": { "ja": "11:00 のリリース以降、接続数が直線的に増加（リークの典型）", "en": "connections grow linearly since the 11:00 release (classic leak)" }
+    },
+    {
+      "id": "ls-releases",
+      "match": ["ls /opt/app/releases", "ls -l /opt/app/releases", "ls -l /opt/app", "ls -la /opt/app", "readlink /opt/app/current", "ls -l /opt/app/current"],
+      "when": { "rolled_back": true },
+      "output": "lrwxrwxrwx 1 deploy deploy 26 Oct  5 11:52 current -> /opt/app/releases/v2.7.3\ndrwxr-xr-x 5 deploy deploy 4096 Sep 28 10:00 v2.7.3\ndrwxr-xr-x 5 deploy deploy 4096 Oct  5 11:00 v2.8.0"
+    },
+    {
+      "id": "ls-releases-new",
+      "match": ["ls /opt/app/releases", "ls -l /opt/app/releases", "ls -l /opt/app", "ls -la /opt/app", "readlink /opt/app/current", "ls -l /opt/app/current"],
+      "output": "lrwxrwxrwx 1 deploy deploy 26 Oct  5 11:00 current -> /opt/app/releases/v2.8.0\ndrwxr-xr-x 5 deploy deploy 4096 Sep 28 10:00 v2.7.3\ndrwxr-xr-x 5 deploy deploy 4096 Oct  5 11:00 v2.8.0"
+    },
+    {
+      "id": "changelog",
+      "match": ["cat /opt/app/releases/v2.8.0/CHANGELOG.md", "cat /opt/app/current/CHANGELOG.md"],
+      "output": "## v2.8.0 (2026-10-05)\n- checkout: refactor finalize() into an explicit transaction\n- orders: switch to the pooled DB client\n- ui: new receipt page",
+      "note": { "ja": "v2.8.0 で checkout のトランザクション処理を改修していた", "en": "v2.8.0 refactored the checkout transaction" }
+    },
+    {
+      "id": "rollback",
+      "match": ["ln -sfn /opt/app/releases/v2.7.3 /opt/app/current", "ln -snf /opt/app/releases/v2.7.3 /opt/app/current", "ln -nsf /opt/app/releases/v2.7.3 /opt/app/current"],
+      "output": "",
+      "effects": { "rolled_back": true },
+      "note": { "ja": "current を v2.7.3 に切り戻し", "en": "switched current back to v2.7.3" }
+    },
+    {
+      "id": "restart-after-rollback",
+      "match": ["systemctl restart app", "systemctl restart app.service"],
+      "when": { "rolled_back": true },
+      "output": "",
+      "effects": { "connections_released": true },
+      "note": { "ja": "v2.7.3 で再起動し、リークしていた接続を解放", "en": "restarted on v2.7.3, releasing the leaked connections" }
+    },
+    {
+      "id": "restart-leaky",
+      "match": ["systemctl restart app", "systemctl restart app.service"],
+      "output": "",
+      "note": { "ja": "v2.8.0 のまま再起動 → 一時的に接続は減るが十数分でまた枯渇", "en": "restarted still on v2.8.0: connections drop briefly, then refill in minutes" }
+    },
+    {
+      "id": "status-app",
+      "match": ["systemctl status app", "systemctl status app.service"],
+      "output": "● app.service - Example web app\n     Loaded: loaded (/etc/systemd/system/app.service; enabled)\n     Active: active (running) since Mon 2026-10-05 11:00:31 UTC; 41min ago\n   Main PID: 5120 (app)"
+    },
+    {
+      "id": "raise-max-connections",
+      "match": ["aws rds modify-db-parameter-group"],
+      "matchType": "prefix",
+      "output": "{\n  \"DBParameterGroupName\": \"app-pg16\"\n}",
+      "note": { "ja": "max_connections を上げてもリークは止まらない（しかも再起動が必要）", "en": "raising max_connections does not stop the leak (and needs a reboot)" }
+    },
+    {
+      "id": "reboot-db",
+      "match": ["aws rds reboot-db-instance", "aws rds failover-db-cluster"],
+      "matchType": "prefix",
+      "output": "{\n  \"DBInstance\": { \"DBInstanceIdentifier\": \"db-01\", \"DBInstanceStatus\": \"rebooting\" }\n}",
+      "danger": {
+        "penalty": 25,
+        "message": {
+          "ja": "本番 DB の再起動は全サービスの接続を切断します。リークするリリースのままなら、すぐにまた枯渇します。",
+          "en": "Rebooting the production DB drops every service's connections, and the leaking release will exhaust them again."
+        }
+      }
+    },
+    {
+      "id": "modify-instance",
+      "match": ["aws rds modify-db-instance"],
+      "matchType": "prefix",
+      "output": "{\n  \"DBInstance\": { \"DBInstanceIdentifier\": \"db-01\", \"DBInstanceStatus\": \"modifying\" }\n}",
+      "danger": {
+        "penalty": 20,
+        "message": {
+          "ja": "障害中のインスタンスクラス変更はダウンタイムを伴い、リークという原因も解決しません。",
+          "en": "Changing the instance class mid-incident causes downtime and does not fix the leak."
+        }
+      }
+    }
+  ],
+  "recovery": { "rolled_back": true, "connections_released": true },
+  "hints": [
+    {
+      "ja": "アプリのログ（journalctl -u app）で DB エラーの内容を確認しましょう。",
+      "en": "Check the DB error in the app log (journalctl -u app)."
+    },
+    {
+      "ja": "接続数はいつから増えていますか？ aws cloudwatch get-metric-statistics で DatabaseConnections を見て、リリース時刻と比べましょう。",
+      "en": "Since when have connections been growing? Look at DatabaseConnections with aws cloudwatch get-metric-statistics and compare it with the release time."
+    },
+    {
+      "ja": "DB を増強・再起動しても、接続を返さないリリースのままでは再発します。/opt/app/current を v2.7.3 に戻してから app を再起動しましょう。",
+      "en": "Scaling or rebooting the DB will not help while the leaking release runs. Point /opt/app/current back to v2.7.3, then restart app."
+    }
+  ],
+  "rootCauses": [
+    { "id": "connection-leak-release", "label": { "ja": "v2.8.0 の決済処理がコネクションを返却せず、接続数上限に達した", "en": "v2.8.0's checkout code never released connections and hit the connection limit" } },
+    { "id": "rds-undersized", "label": { "ja": "RDS インスタンスのスペック不足", "en": "The RDS instance is undersized" } },
+    { "id": "traffic-spike", "label": { "ja": "キャンペーンによるアクセス急増", "en": "A traffic spike from a campaign" } },
+    { "id": "rds-failover", "label": { "ja": "RDS のフェイルオーバー", "en": "An RDS failover" } }
+  ],
+  "correctRootCause": "connection-leak-release",
+  "postmortem": {
+    "summary": {
+      "ja": "11:00 にリリースした v2.8.0 の checkout.finalize() が例外経路で DB コネクションを返却しない不具合を含んでいた。接続数がリリース後に直線的に増加し、11:40 に PostgreSQL の max_connections に到達。ログインと決済が 500 となった。",
+      "en": "v2.8.0, released at 11:00, contained a bug where checkout.finalize() did not return DB connections on an error path. Connections grew linearly after the release and reached PostgreSQL max_connections at 11:40, so login and checkout returned 500."
+    },
+    "fix": {
+      "ja": "/opt/app/current を v2.7.3 に切り戻して app を再起動し、リークしていた接続を解放した。",
+      "en": "Switched /opt/app/current back to v2.7.3 and restarted app, releasing the leaked connections."
+    },
+    "prevention": {
+      "ja": "- コネクションプールに最大数と取得タイムアウト・リーク検知を設定する\n- DatabaseConnections のアラーム（上限の 70%）を追加する\n- RDS Proxy の導入と、カナリアリリースで接続数の推移を確認する",
+      "en": "- Configure the connection pool with a maximum size, acquire timeout and leak detection\n- Add a DatabaseConnections alarm at 70% of the limit\n- Introduce RDS Proxy and watch connection counts during canary releases"
+    }
+  }
+}

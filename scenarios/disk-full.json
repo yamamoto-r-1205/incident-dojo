@@ -1,0 +1,230 @@
+{
+  "id": "disk-full",
+  "version": 1,
+  "title": {
+    "ja": "ディスク 100%：ログを消したのに空かない",
+    "en": "Disk at 100%: deleting the log did not help"
+  },
+  "briefing": {
+    "ja": "07:15、app-01 のディスク使用率アラームが 100% で発報し、API が 500 を返し始めました。前日に別件調査のため一時的に設定を変えた、という引き継ぎメモがあります。app-01 にログインして空き容量を回復させ、根本原因を報告してください。",
+    "en": "At 07:15 the disk usage alarm on app-01 hit 100% and the API started returning 500. A handover note says a setting was changed temporarily yesterday for another investigation. Log in to app-01, free up disk space and report the root cause."
+  },
+  "severity": "P2",
+  "category": "linux",
+  "host": "app-01",
+  "par": 7,
+  "initialFlags": {
+    "file_deleted": false,
+    "space_freed": false
+  },
+  "commands": [
+    {
+      "id": "curl-ok",
+      "match": ["curl"],
+      "matchType": "prefix",
+      "when": { "space_freed": true },
+      "output": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"status\":\"ok\"}"
+    },
+    {
+      "id": "curl-500",
+      "match": ["curl"],
+      "matchType": "prefix",
+      "output": "HTTP/1.1 500 Internal Server Error\nContent-Type: application/json\n\n{\"error\":\"write /var/lib/app/sessions/sess_7f3a: no space left on device\"}",
+      "note": { "ja": "500 と no space left on device を確認", "en": "saw 500 with \"no space left on device\"" }
+    },
+    {
+      "id": "df-freed",
+      "match": ["df -h", "df", "df -h /"],
+      "when": { "space_freed": true },
+      "output": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p1   30G  6.8G   24G  23% /\ntmpfs           1.9G     0  1.9G   0% /dev/shm"
+    },
+    {
+      "id": "df-full",
+      "match": ["df -h", "df", "df -h /"],
+      "output": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p1   30G   30G     0 100% /\ntmpfs           1.9G     0  1.9G   0% /dev/shm",
+      "note": { "ja": "ルートファイルシステムが 100%", "en": "root filesystem at 100%" }
+    },
+    {
+      "id": "df-inodes",
+      "match": ["df -i", "df -ih", "df -hi"],
+      "output": "Filesystem      Inodes IUsed IFree IUse% Mounted on\n/dev/nvme0n1p1   1.9M  142K  1.8M    8% /"
+    },
+    {
+      "id": "du-small-freed",
+      "match": ["du -sh /var/log/*", "du -sh /var/log/app/*", "du -sh /var/log/app", "du -h --max-depth=1 /var/log", "du -sh /var/*", "du -h -d 1 /var/log"],
+      "when": { "space_freed": true },
+      "output": "4.0K\t/var/log/app/app.log\n212M\t/var/log/app/app.log.1.gz\n38M\t/var/log/journal\n1.2M\t/var/log/syslog"
+    },
+    {
+      "id": "du-small-deleted",
+      "match": ["du -sh /var/log/*", "du -sh /var/log/app/*", "du -sh /var/log/app", "du -h --max-depth=1 /var/log", "du -sh /var/*", "du -h -d 1 /var/log"],
+      "when": { "file_deleted": true },
+      "output": "212M\t/var/log/app/app.log.1.gz\n38M\t/var/log/journal\n1.2M\t/var/log/syslog",
+      "note": { "ja": "du では小さいのに df は 100% のまま（不整合）", "en": "du is small but df still shows 100% (mismatch)" }
+    },
+    {
+      "id": "du-big",
+      "match": ["du -sh /var/log/*", "du -sh /var/log/app/*", "du -sh /var/log/app", "du -h --max-depth=1 /var/log", "du -sh /var/*", "du -h -d 1 /var/log"],
+      "output": "23G\t/var/log/app/app.log\n212M\t/var/log/app/app.log.1.gz\n38M\t/var/log/journal\n1.2M\t/var/log/syslog",
+      "note": { "ja": "/var/log/app/app.log が 23GB に肥大化", "en": "/var/log/app/app.log has grown to 23 GB" }
+    },
+    {
+      "id": "ls-log-deleted",
+      "match": ["ls -lh /var/log/app", "ls -l /var/log/app", "ls -la /var/log/app", "ls -lah /var/log/app", "ls /var/log/app"],
+      "when": { "file_deleted": true, "space_freed": false },
+      "output": "total 212M\n-rw-r--r-- 1 app app 212M Oct  4 00:00 app.log.1.gz"
+    },
+    {
+      "id": "ls-log",
+      "match": ["ls -lh /var/log/app", "ls -l /var/log/app", "ls -la /var/log/app", "ls -lah /var/log/app", "ls /var/log/app"],
+      "when": { "space_freed": false },
+      "output": "total 23G\n-rw-r--r-- 1 app app  23G Oct  5 07:15 app.log\n-rw-r--r-- 1 app app 212M Oct  4 00:00 app.log.1.gz"
+    },
+    {
+      "id": "ls-log-freed",
+      "match": ["ls -lh /var/log/app", "ls -l /var/log/app", "ls -la /var/log/app", "ls -lah /var/log/app", "ls /var/log/app"],
+      "output": "total 212M\n-rw-r--r-- 1 app app 4.0K Oct  5 07:31 app.log\n-rw-r--r-- 1 app app 212M Oct  4 00:00 app.log.1.gz"
+    },
+    {
+      "id": "lsof-deleted",
+      "match": ["lsof +L1", "lsof -nP +L1", "lsof | grep deleted", "lsof -p 2214"],
+      "when": { "file_deleted": true, "space_freed": false },
+      "output": "COMMAND  PID USER   FD   TYPE DEVICE    SIZE/OFF NLINK    NODE NAME\napp     2214  app    3w   REG  259,1 24696061952     0  393221 /var/log/app/app.log (deleted)",
+      "note": { "ja": "削除済みファイルを app(PID 2214) がまだ開いていると判明", "en": "found that app (PID 2214) still holds the deleted file open" }
+    },
+    {
+      "id": "lsof-none",
+      "match": ["lsof +L1", "lsof -nP +L1", "lsof | grep deleted", "lsof -p 2214"],
+      "output": "COMMAND  PID USER   FD   TYPE DEVICE SIZE/OFF NLINK NODE NAME"
+    },
+    {
+      "id": "tail-log",
+      "match": ["tail /var/log/app/app.log", "tail -n 20 /var/log/app/app.log", "tail -n 50 /var/log/app/app.log", "tail -f /var/log/app/app.log", "less /var/log/app/app.log"],
+      "output": "2026-10-05T07:14:59.981Z level=debug msg=\"cache lookup\" key=user:48213 hit=false\n2026-10-05T07:14:59.981Z level=debug msg=\"sql\" query=\"SELECT * FROM sessions WHERE id=$1\" args=[sess_7f3a]\n2026-10-05T07:14:59.982Z level=debug msg=\"http response\" status=200 bytes=5120 body=\"{...}\"\n2026-10-05T07:15:00.003Z level=error msg=\"write session\" err=\"no space left on device\"",
+      "note": { "ja": "本番で debug レベルのログ（SQL・レスポンス本文）が大量出力", "en": "production is writing debug-level logs (SQL, response bodies)" }
+    },
+    {
+      "id": "cat-env",
+      "match": ["cat /etc/app/app.env"],
+      "output": "APP_PORT=8080\n# TEMP 2026-10-04: debug enabled to investigate slow logins. REVERT AFTERWARDS!\nLOG_LEVEL=debug\nSESSION_DIR=/var/lib/app/sessions",
+      "note": { "ja": "前日の一時対応で LOG_LEVEL=debug のまま戻されていない", "en": "LOG_LEVEL=debug left on after yesterday's temporary change" }
+    },
+    {
+      "id": "journal-app",
+      "match": ["journalctl -u app", "journalctl -u app.service", "journalctl -xeu app"],
+      "matchType": "prefix",
+      "output": "Oct 05 07:15:00 app-01 app[2214]: level=error msg=\"write session\" err=\"no space left on device\"\nOct 05 07:15:01 app-01 app[2214]: level=error msg=\"write session\" err=\"no space left on device\""
+    },
+    {
+      "id": "status-app",
+      "match": ["systemctl status app", "systemctl status app.service"],
+      "output": "● app.service - Example API\n     Loaded: loaded (/etc/systemd/system/app.service; enabled)\n     Active: active (running) since Sat 2026-10-03 22:10:41 UTC; 1 day 9h ago\n   Main PID: 2214 (app)"
+    },
+    {
+      "id": "truncate-after-rm",
+      "match": ["truncate -s 0 /var/log/app/app.log", ": > /var/log/app/app.log", "> /var/log/app/app.log", "cat /dev/null > /var/log/app/app.log"],
+      "when": { "file_deleted": true },
+      "output": "",
+      "note": { "ja": "新しい空ファイルを作っただけ。削除済みの 23GB は解放されない", "en": "only created a new empty file; the deleted 23 GB is still held" }
+    },
+    {
+      "id": "truncate",
+      "match": ["truncate -s 0 /var/log/app/app.log", ": > /var/log/app/app.log", "> /var/log/app/app.log", "cat /dev/null > /var/log/app/app.log"],
+      "output": "",
+      "effects": { "space_freed": true },
+      "note": { "ja": "ファイルを開いたまま truncate で中身を空にし、容量を即時解放", "en": "truncated the open file in place, freeing space immediately" }
+    },
+    {
+      "id": "rm-log",
+      "match": ["rm /var/log/app/app.log", "rm -f /var/log/app/app.log"],
+      "when": { "file_deleted": false, "space_freed": false },
+      "output": "",
+      "effects": { "file_deleted": true },
+      "note": { "ja": "プロセスが開いているログを rm（ディレクトリから消えるだけで容量は解放されない）", "en": "rm'd a log still open by the process (unlinked, space not freed)" }
+    },
+    {
+      "id": "restart-after-rm",
+      "match": ["systemctl restart app", "systemctl restart app.service"],
+      "when": { "file_deleted": true },
+      "output": "",
+      "effects": { "space_freed": true },
+      "note": { "ja": "app を再起動してファイルハンドルを閉じ、容量を解放", "en": "restarted app, closing the handle and freeing space" }
+    },
+    {
+      "id": "restart-noop",
+      "match": ["systemctl restart app", "systemctl restart app.service"],
+      "output": "",
+      "note": { "ja": "再起動しても 23GB のファイルはそのまま", "en": "restart alone leaves the 23 GB file in place" }
+    },
+    {
+      "id": "free",
+      "match": ["free -h", "free -m", "free"],
+      "output": "               total        used        free      shared  buff/cache   available\nMem:           3.8Gi       1.1Gi       0.4Gi        10Mi       2.3Gi       2.4Gi\nSwap:             0B          0B          0B"
+    },
+    {
+      "id": "uptime",
+      "match": ["uptime"],
+      "output": " 07:21:44 up 41 days,  2:11,  1 user,  load average: 0.31, 0.28, 0.25"
+    },
+    {
+      "id": "rm-rf-logs",
+      "match": ["rm -rf /var/log/app", "rm -rf /var/log/app/", "rm -rf /var/log/app/*", "rm -rf /var/log/*", "rm -rf /var/lib/app/sessions"],
+      "output": "",
+      "danger": {
+        "penalty": 20,
+        "message": {
+          "ja": "ログやセッションデータを丸ごと消すと証拠もユーザーデータも失われます。しかもプロセスが開いたままなら容量は戻りません。",
+          "en": "Wiping logs or session data destroys evidence and user data, and space held by open files still is not released."
+        }
+      }
+    },
+    {
+      "id": "reboot",
+      "match": ["reboot", "shutdown -r now", "systemctl reboot"],
+      "output": "Connection to app-01 closed by remote host.\n... (reconnected after 95s) ...",
+      "danger": {
+        "penalty": 15,
+        "message": {
+          "ja": "原因を確認せずに再起動するとサービスが止まり、debug ログはすぐにまたディスクを埋めます。",
+          "en": "Rebooting without a diagnosis takes the service down, and the debug logging will fill the disk again."
+        }
+      }
+    }
+  ],
+  "recovery": { "space_freed": true },
+  "hints": [
+    {
+      "ja": "まず df -h で埋まっているファイルシステムを、du -sh /var/log/* で大きいディレクトリを特定しましょう。",
+      "en": "Use df -h to find the full filesystem, then du -sh /var/log/* to find what is big."
+    },
+    {
+      "ja": "なぜログがこんなに増えたのでしょう？ ログの中身と /etc/app/app.env を見てみましょう。",
+      "en": "Why did the log grow so much? Look at the log content and /etc/app/app.env."
+    },
+    {
+      "ja": "プロセスが書き込み中のファイルは rm してもディスクが空きません（lsof +L1 で確認）。truncate -s 0 で中身を空にするか、rm した後にプロセスを再起動します。",
+      "en": "Deleting a file a process still writes to does not free space (check lsof +L1). Empty it with truncate -s 0, or restart the process after rm."
+    }
+  ],
+  "rootCauses": [
+    { "id": "debug-log-left-on", "label": { "ja": "一時的に有効化した debug ログが戻されず、ログが肥大化した", "en": "Temporarily enabled debug logging was never reverted and the log ballooned" } },
+    { "id": "inode-exhaustion", "label": { "ja": "セッションファイルの増加による inode 枯渇", "en": "Inode exhaustion from too many session files" } },
+    { "id": "core-dumps", "label": { "ja": "クラッシュによるコアダンプの蓄積", "en": "Core dumps piling up after crashes" } },
+    { "id": "logrotate-missing", "label": { "ja": "logrotate の設定が存在しない", "en": "No logrotate configuration exists" } }
+  ],
+  "correctRootCause": "debug-log-left-on",
+  "postmortem": {
+    "summary": {
+      "ja": "前日に調査目的で LOG_LEVEL=debug に変更し、戻し忘れたため /var/log/app/app.log が 1 日で 23GB に肥大化。ルートファイルシステムが 100% となり、セッション書き込みに失敗して API が 500 を返した。",
+      "en": "LOG_LEVEL was set to debug the day before for an investigation and never reverted. /var/log/app/app.log grew to 23 GB in a day, the root filesystem hit 100% and session writes failed, so the API returned 500."
+    },
+    "fix": {
+      "ja": "truncate -s 0 でログファイルを開いたまま空にし、容量を回復した（rm してしまった場合は app を再起動してファイルハンドルを解放する）。",
+      "en": "Emptied the log in place with truncate -s 0 (if it had been rm'd, restarting app releases the file handle)."
+    },
+    "prevention": {
+      "ja": "- 一時的な設定変更には期限と戻し担当を必ず記録する（チケット化・リマインダー）\n- logrotate にサイズ上限（maxsize）と copytruncate を設定する\n- ディスク使用率 80% で警告するアラームを追加する",
+      "en": "- Record an expiry and owner for every temporary config change (ticket or reminder)\n- Configure logrotate with maxsize and copytruncate\n- Add a warning alarm at 80% disk usage"
+    }
+  }
+}

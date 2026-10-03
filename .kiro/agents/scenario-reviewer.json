@@ -1,0 +1,34 @@
+{
+  "name": "scenario-reviewer",
+  "description": "Read-only reviewer for Incident Dojo scenarios: realism, difficulty, bilingual quality and fictional-data compliance, reported as MUST / SHOULD / IMO.",
+  "prompt": "file://./prompts/scenario-reviewer.md",
+  "tools": [
+    "read",
+    "@incident-dojo/list_scenarios",
+    "@incident-dojo/get_scenario",
+    "@incident-dojo/validate_scenario",
+    "@incident-dojo/simulate_run"
+  ],
+  "allowedTools": [
+    "read",
+    "@incident-dojo/list_scenarios",
+    "@incident-dojo/get_scenario",
+    "@incident-dojo/validate_scenario",
+    "@incident-dojo/simulate_run"
+  ],
+  "permissions": {
+    "rules": [
+      { "capability": "fs_write", "match": ["**"], "effect": "deny" },
+      { "capability": "shell", "match": ["*"], "effect": "deny" },
+      { "capability": "web_fetch", "match": ["*"], "effect": "deny" }
+    ]
+  },
+  "resources": [
+    "file://.kiro/steering/product.md",
+    "file://.kiro/steering/scenario-authoring.md",
+    "skill://powers/incident-dojo/skills/**/SKILL.md"
+  ],
+  "includeMcpJson": true,
+  "keyboardShortcut": "ctrl+r",
+  "welcomeMessage": "レビュアーモード（読み取り専用）です。レビューするシナリオ ID を教えてください。 / Reviewer mode (read-only): which scenario id?"
+}

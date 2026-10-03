@@ -1,0 +1,191 @@
+{
+  "id": "alb-unhealthy",
+  "version": 1,
+  "title": {
+    "ja": "ALB が 503：アプリは元気なのにターゲットが Unhealthy",
+    "en": "ALB returns 503: the app is fine but targets are unhealthy"
+  },
+  "briefing": {
+    "ja": "15:10、www.example.com へのアクセスがすべて 503 になりました。15:00〜15:05 に「不要なセキュリティグループルールの整理」作業がありました。あなたは AWS CLI が使える踏み台 bastion-01（アカウント 123456789012 / ap-northeast-1）にいます。サービスを復旧させ、根本原因を報告してください。長い ID は Tab 補完が便利です。",
+    "en": "At 15:10 every request to www.example.com started returning 503. A \"clean up unused security group rules\" change ran from 15:00 to 15:05. You are on bastion-01 with the AWS CLI (account 123456789012 / ap-northeast-1). Recover the service and report the root cause. Tab completion helps with long ids."
+  },
+  "severity": "P1",
+  "category": "aws",
+  "host": "bastion-01",
+  "par": 8,
+  "initialFlags": {
+    "ingress_restored": false
+  },
+  "commands": [
+    {
+      "id": "curl-ok",
+      "match": ["curl"],
+      "matchType": "prefix",
+      "when": { "ingress_restored": true },
+      "output": "HTTP/2 200\ncontent-type: text/html; charset=utf-8\nserver: nginx"
+    },
+    {
+      "id": "curl-503",
+      "match": ["curl"],
+      "matchType": "prefix",
+      "output": "HTTP/2 503\nserver: awselb/2.0\ncontent-type: text/html\ncontent-length: 162",
+      "note": { "ja": "ALB 自身（awselb/2.0）が 503 を返している", "en": "the ALB itself (awselb/2.0) returns 503" }
+    },
+    {
+      "id": "describe-lb",
+      "match": ["aws elbv2 describe-load-balancers"],
+      "matchType": "prefix",
+      "output": "{\n  \"LoadBalancers\": [{\n    \"LoadBalancerName\": \"alb-web\",\n    \"DNSName\": \"alb-web-1234567890.ap-northeast-1.elb.amazonaws.com\",\n    \"Scheme\": \"internet-facing\",\n    \"State\": { \"Code\": \"active\" },\n    \"SecurityGroups\": [\"sg-0aaa1111bbbb2222c\"]\n  }]\n}"
+    },
+    {
+      "id": "describe-tg",
+      "match": ["aws elbv2 describe-target-groups"],
+      "matchType": "prefix",
+      "output": "{\n  \"TargetGroups\": [{\n    \"TargetGroupName\": \"tg-app\",\n    \"TargetGroupArn\": \"arn:aws:elasticloadbalancing:ap-northeast-1:123456789012:targetgroup/tg-app/0123456789abcdef\",\n    \"Protocol\": \"HTTP\",\n    \"Port\": 8080,\n    \"HealthCheckPath\": \"/health\",\n    \"HealthCheckPort\": \"traffic-port\"\n  }]\n}"
+    },
+    {
+      "id": "target-health-ok",
+      "match": ["aws elbv2 describe-target-health"],
+      "matchType": "prefix",
+      "when": { "ingress_restored": true },
+      "output": "{\n  \"TargetHealthDescriptions\": [\n    { \"Target\": { \"Id\": \"i-0a1b2c3d4e5f60001\", \"Port\": 8080 }, \"TargetHealth\": { \"State\": \"healthy\" } },\n    { \"Target\": { \"Id\": \"i-0a1b2c3d4e5f60002\", \"Port\": 8080 }, \"TargetHealth\": { \"State\": \"healthy\" } }\n  ]\n}"
+    },
+    {
+      "id": "target-health-bad",
+      "match": ["aws elbv2 describe-target-health"],
+      "matchType": "prefix",
+      "output": "{\n  \"TargetHealthDescriptions\": [\n    { \"Target\": { \"Id\": \"i-0a1b2c3d4e5f60001\", \"Port\": 8080 }, \"TargetHealth\": { \"State\": \"unhealthy\", \"Reason\": \"Target.Timeout\", \"Description\": \"Request timed out\" } },\n    { \"Target\": { \"Id\": \"i-0a1b2c3d4e5f60002\", \"Port\": 8080 }, \"TargetHealth\": { \"State\": \"unhealthy\", \"Reason\": \"Target.Timeout\", \"Description\": \"Request timed out\" } }\n  ]\n}",
+      "note": { "ja": "全ターゲットが Target.Timeout（応答拒否ではなくタイムアウト）", "en": "all targets show Target.Timeout (a timeout, not a refusal)" }
+    },
+    {
+      "id": "describe-instances",
+      "match": ["aws ec2 describe-instances", "aws ec2 describe-instance-status"],
+      "matchType": "prefix",
+      "output": "{\n  \"Reservations\": [{ \"Instances\": [\n    { \"InstanceId\": \"i-0a1b2c3d4e5f60001\", \"State\": { \"Name\": \"running\" }, \"PrivateIpAddress\": \"10.0.11.21\", \"SecurityGroups\": [{ \"GroupId\": \"sg-0ddd3333eeee4444f\", \"GroupName\": \"sg-app\" }] },\n    { \"InstanceId\": \"i-0a1b2c3d4e5f60002\", \"State\": { \"Name\": \"running\" }, \"PrivateIpAddress\": \"10.0.12.22\", \"SecurityGroups\": [{ \"GroupId\": \"sg-0ddd3333eeee4444f\", \"GroupName\": \"sg-app\" }] }\n  ]}]\n}"
+    },
+    {
+      "id": "app-direct",
+      "match": ["ssh web-01 curl -s localhost:8080/health", "ssh 10.0.11.21 curl -s localhost:8080/health", "aws ssm send-command"],
+      "matchType": "prefix",
+      "output": "{\"status\":\"ok\",\"uptime_seconds\":86211}",
+      "note": { "ja": "インスタンス上ではアプリは正常応答（アプリ起因ではない）", "en": "the app answers fine on the instance (not an app problem)" }
+    },
+    {
+      "id": "sg-restored",
+      "match": ["aws ec2 describe-security-groups"],
+      "matchType": "prefix",
+      "when": { "ingress_restored": true },
+      "output": "{\n  \"SecurityGroups\": [\n    { \"GroupId\": \"sg-0aaa1111bbbb2222c\", \"GroupName\": \"sg-alb\", \"IpPermissions\": [{ \"IpProtocol\": \"tcp\", \"FromPort\": 443, \"ToPort\": 443, \"IpRanges\": [{ \"CidrIp\": \"0.0.0.0/0\" }] }] },\n    { \"GroupId\": \"sg-0ddd3333eeee4444f\", \"GroupName\": \"sg-app\", \"IpPermissions\": [\n      { \"IpProtocol\": \"tcp\", \"FromPort\": 22, \"ToPort\": 22, \"UserIdGroupPairs\": [{ \"GroupId\": \"sg-0bbb5555cccc6666d\", \"Description\": \"from bastion\" }] },\n      { \"IpProtocol\": \"tcp\", \"FromPort\": 8080, \"ToPort\": 8080, \"UserIdGroupPairs\": [{ \"GroupId\": \"sg-0aaa1111bbbb2222c\" }] }\n    ] }\n  ]\n}"
+    },
+    {
+      "id": "sg-broken",
+      "match": ["aws ec2 describe-security-groups"],
+      "matchType": "prefix",
+      "output": "{\n  \"SecurityGroups\": [\n    { \"GroupId\": \"sg-0aaa1111bbbb2222c\", \"GroupName\": \"sg-alb\", \"IpPermissions\": [{ \"IpProtocol\": \"tcp\", \"FromPort\": 443, \"ToPort\": 443, \"IpRanges\": [{ \"CidrIp\": \"0.0.0.0/0\" }] }] },\n    { \"GroupId\": \"sg-0ddd3333eeee4444f\", \"GroupName\": \"sg-app\", \"IpPermissions\": [\n      { \"IpProtocol\": \"tcp\", \"FromPort\": 22, \"ToPort\": 22, \"UserIdGroupPairs\": [{ \"GroupId\": \"sg-0bbb5555cccc6666d\", \"Description\": \"from bastion\" }] }\n    ] }\n  ]\n}",
+      "note": { "ja": "sg-app に ALB からの 8080 インバウンドがない", "en": "sg-app has no inbound 8080 rule from the ALB" }
+    },
+    {
+      "id": "cloudtrail",
+      "match": ["aws cloudtrail lookup-events"],
+      "matchType": "prefix",
+      "output": "{\n  \"Events\": [\n    { \"EventTime\": \"2026-10-05T15:03:12Z\", \"EventName\": \"RevokeSecurityGroupIngress\", \"Username\": \"sg-cleanup-script\",\n      \"CloudTrailEvent\": \"{\\\"requestParameters\\\":{\\\"groupId\\\":\\\"sg-0ddd3333eeee4444f\\\",\\\"ipPermissions\\\":{\\\"items\\\":[{\\\"ipProtocol\\\":\\\"tcp\\\",\\\"fromPort\\\":8080,\\\"toPort\\\":8080,\\\"groups\\\":{\\\"items\\\":[{\\\"groupId\\\":\\\"sg-0aaa1111bbbb2222c\\\"}]}}]}}}\" }\n  ]\n}",
+      "note": { "ja": "15:03 に整理スクリプトが ALB→8080 のルールを削除していた", "en": "at 15:03 the cleanup script revoked the ALB -> 8080 rule" }
+    },
+    {
+      "id": "cloudwatch",
+      "match": ["aws cloudwatch get-metric-statistics", "aws cloudwatch describe-alarms"],
+      "matchType": "prefix",
+      "output": "{\n  \"Label\": \"UnHealthyHostCount\",\n  \"Datapoints\": [\n    { \"Timestamp\": \"2026-10-05T15:00:00Z\", \"Maximum\": 0.0 },\n    { \"Timestamp\": \"2026-10-05T15:05:00Z\", \"Maximum\": 2.0 },\n    { \"Timestamp\": \"2026-10-05T15:10:00Z\", \"Maximum\": 2.0 }\n  ]\n}"
+    },
+    {
+      "id": "authorize-correct",
+      "match": [
+        "aws ec2 authorize-security-group-ingress --group-id sg-0ddd3333eeee4444f --protocol tcp --port 8080 --source-group sg-0aaa1111bbbb2222c",
+        "aws ec2 authorize-security-group-ingress --group-id sg-0ddd3333eeee4444f --source-group sg-0aaa1111bbbb2222c --protocol tcp --port 8080"
+      ],
+      "when": { "ingress_restored": false },
+      "output": "{\n  \"Return\": true,\n  \"SecurityGroupRules\": [{ \"SecurityGroupRuleId\": \"sgr-0f1e2d3c4b5a69788\", \"GroupId\": \"sg-0ddd3333eeee4444f\", \"IsEgress\": false, \"IpProtocol\": \"tcp\", \"FromPort\": 8080, \"ToPort\": 8080, \"ReferencedGroupInfo\": { \"GroupId\": \"sg-0aaa1111bbbb2222c\" } }]\n}",
+      "effects": { "ingress_restored": true },
+      "note": { "ja": "ALB の SG から 8080 へのインバウンドを最小権限で復元", "en": "restored least-privilege ingress from the ALB SG to 8080" }
+    },
+    {
+      "id": "authorize-world",
+      "match": [
+        "aws ec2 authorize-security-group-ingress --group-id sg-0ddd3333eeee4444f --protocol tcp --port 8080 --cidr 0.0.0.0/0",
+        "aws ec2 authorize-security-group-ingress --group-id sg-0ddd3333eeee4444f --protocol all --cidr 0.0.0.0/0",
+        "aws ec2 authorize-security-group-ingress --group-id sg-0ddd3333eeee4444f --protocol -1 --cidr 0.0.0.0/0"
+      ],
+      "output": "{\n  \"Return\": true\n}",
+      "danger": {
+        "penalty": 25,
+        "message": {
+          "ja": "アプリサーバーをインターネット全体（0.0.0.0/0）に公開しました。ALB を経由しない直接攻撃にさらされます。送信元は ALB のセキュリティグループに限定してください。",
+          "en": "You exposed the app servers to the whole internet (0.0.0.0/0), bypassing the ALB. Restrict the source to the ALB security group."
+        }
+      }
+    },
+    {
+      "id": "authorize-other",
+      "match": ["aws ec2 authorize-security-group-ingress"],
+      "matchType": "prefix",
+      "output": "An error occurred (InvalidParameterValue) when calling the AuthorizeSecurityGroupIngress operation: check --group-id (target SG), --protocol, --port and --source-group (ALB SG).",
+      "note": { "ja": "パラメータ不足・誤りで失敗", "en": "failed: missing or wrong parameters" }
+    },
+    {
+      "id": "reboot-instances",
+      "match": ["aws ec2 reboot-instances"],
+      "matchType": "prefix",
+      "output": "",
+      "note": { "ja": "インスタンスを再起動しても SG は変わらない", "en": "rebooting instances does not change the security group" }
+    },
+    {
+      "id": "delete-lb",
+      "match": ["aws elbv2 delete-load-balancer", "aws ec2 delete-security-group", "aws elbv2 delete-target-group"],
+      "matchType": "prefix",
+      "output": "",
+      "danger": {
+        "penalty": 40,
+        "message": {
+          "ja": "本番のロードバランサーやセキュリティグループを削除すると、DNS や依存リソースを含めて復旧に長時間かかります。",
+          "en": "Deleting the production load balancer or security groups turns a config fix into a long rebuild, including DNS and dependencies."
+        }
+      }
+    }
+  ],
+  "recovery": { "ingress_restored": true },
+  "hints": [
+    {
+      "ja": "503 の発信元は ALB です。ターゲットの状態を aws elbv2 describe-target-health で確認しましょう。",
+      "en": "The 503 comes from the ALB. Check target state with aws elbv2 describe-target-health."
+    },
+    {
+      "ja": "Target.Timeout はパケットが届いていない可能性を示します。直前の作業はセキュリティグループの整理でした。aws ec2 describe-security-groups や aws cloudtrail lookup-events を見てみましょう。",
+      "en": "Target.Timeout suggests packets are not arriving. The previous change was a security group cleanup. Look at aws ec2 describe-security-groups and aws cloudtrail lookup-events."
+    },
+    {
+      "ja": "aws ec2 authorize-security-group-ingress で、アプリの SG に ALB の SG（--source-group）からの tcp/8080 を追加します。0.0.0.0/0 は使わないこと。",
+      "en": "Use aws ec2 authorize-security-group-ingress to allow tcp/8080 on the app SG from the ALB SG (--source-group). Do not use 0.0.0.0/0."
+    }
+  ],
+  "rootCauses": [
+    { "id": "sg-ingress-revoked", "label": { "ja": "SG 整理作業で ALB→アプリ(8080) のインバウンドルールが削除された", "en": "The SG cleanup revoked the ALB -> app (8080) inbound rule" } },
+    { "id": "app-crashed", "label": { "ja": "アプリケーションプロセスの停止", "en": "The application process crashed" } },
+    { "id": "healthcheck-path-changed", "label": { "ja": "ヘルスチェックパスの設定ミス", "en": "A misconfigured health check path" } },
+    { "id": "az-outage", "label": { "ja": "AWS アベイラビリティーゾーンの障害", "en": "An AWS Availability Zone outage" } }
+  ],
+  "correctRootCause": "sg-ingress-revoked",
+  "postmortem": {
+    "summary": {
+      "ja": "15:03、未使用ルールの整理スクリプトが sg-app から「ALB の SG → tcp/8080」のインバウンドルールを削除した。ALB のヘルスチェックがタイムアウトし、全ターゲットが Unhealthy となって ALB が 503 を返した。アプリ自体は正常に稼働していた。",
+      "en": "At 15:03 a script cleaning up \"unused\" rules revoked the \"ALB SG -> tcp/8080\" inbound rule from sg-app. ALB health checks timed out, every target became unhealthy and the ALB returned 503. The application itself was healthy."
+    },
+    "fix": {
+      "ja": "aws ec2 authorize-security-group-ingress で、sg-app に ALB の SG を送信元とする tcp/8080 を再追加した。",
+      "en": "Re-added tcp/8080 from the ALB security group to sg-app with aws ec2 authorize-security-group-ingress."
+    },
+    "prevention": {
+      "ja": "- セキュリティグループを IaC で管理し、変更はレビューと plan 差分の確認を必須にする\n- 「未使用」判定にはフローログ等の実トラフィックを使う\n- UnHealthyHostCount のアラームを設定し、変更作業の完了確認に ALB ヘルスを含める",
+      "en": "- Manage security groups as code and require review of the plan diff for every change\n- Decide \"unused\" from real traffic (e.g. VPC Flow Logs), not guesses\n- Alarm on UnHealthyHostCount and include ALB health in change verification"
+    }
+  }
+}

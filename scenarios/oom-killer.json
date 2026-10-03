@@ -1,0 +1,198 @@
+{
+  "id": "oom-killer",
+  "version": 1,
+  "title": {
+    "ja": "API が数分おきに落ちる：再起動しても直らない",
+    "en": "The API dies every few minutes and restarts do not help"
+  },
+  "briefing": {
+    "ja": "10:05 頃から api-01 の API が断続的に 503 を返しています。監視では api.service の再起動が繰り返されているようです。今朝 09:40 にキャッシュ設定の変更がリリースされました。api-01 にログインし、サービスを安定させ、根本原因を報告してください。",
+    "en": "Since about 10:05 the API on api-01 intermittently returns 503. Monitoring shows api.service restarting again and again. A cache configuration change was released at 09:40 this morning. Log in to api-01, stabilize the service and report the root cause."
+  },
+  "severity": "P1",
+  "category": "linux",
+  "host": "api-01",
+  "par": 8,
+  "initialFlags": {
+    "config_rolled_back": false,
+    "app_stable": false
+  },
+  "commands": [
+    {
+      "id": "curl-ok",
+      "match": ["curl"],
+      "matchType": "prefix",
+      "when": { "app_stable": true },
+      "output": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"status\":\"ok\",\"cache_items\":31244}"
+    },
+    {
+      "id": "curl-503",
+      "match": ["curl"],
+      "matchType": "prefix",
+      "output": "curl: (7) Failed to connect to localhost port 8080 after 0 ms: Connection refused"
+    },
+    {
+      "id": "status-stable",
+      "match": ["systemctl status api", "systemctl status api.service"],
+      "when": { "app_stable": true },
+      "output": "● api.service - Example API\n     Loaded: loaded (/etc/systemd/system/api.service; enabled)\n     Active: active (running) since Mon 2026-10-05 10:31:12 UTC; 2min ago\n   Main PID: 9120 (api)\n     Memory: 812.4M"
+    },
+    {
+      "id": "status-crashloop",
+      "match": ["systemctl status api", "systemctl status api.service"],
+      "output": "● api.service - Example API\n     Loaded: loaded (/etc/systemd/system/api.service; enabled)\n     Active: activating (auto-restart) (Result: signal) since Mon 2026-10-05 10:21:40 UTC; 3s ago\n    Process: 8874 ExecStart=/opt/api/bin/api --config /etc/api/config.yaml (code=killed, signal=KILL)\n\nOct 05 10:21:40 api-01 systemd[1]: api.service: Main process exited, code=killed, status=9/KILL\nOct 05 10:21:40 api-01 systemd[1]: api.service: Failed with result 'signal'.\nOct 05 10:21:40 api-01 systemd[1]: api.service: Scheduled restart job, restart counter is at 7.",
+      "note": { "ja": "SIGKILL で終了 → 再起動を 7 回繰り返している", "en": "killed by SIGKILL, restarted 7 times" }
+    },
+    {
+      "id": "dmesg-oom",
+      "match": ["dmesg", "journalctl -k", "dmesg -T"],
+      "matchType": "prefix",
+      "output": "[Mon Oct  5 10:21:39 2026] api invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0\n[Mon Oct  5 10:21:39 2026] Out of memory: Killed process 8874 (api) total-vm:9214332kB, anon-rss:7698120kB, file-rss:0kB, shmem-rss:0kB, UID:998 pgtables:15388kB oom_score_adj:0\n[Mon Oct  5 10:14:02 2026] Out of memory: Killed process 8530 (api) total-vm:9201876kB, anon-rss:7681004kB, file-rss:0kB, shmem-rss:0kB, UID:998 pgtables:15360kB oom_score_adj:0",
+      "note": { "ja": "OOM Killer が api を強制終了（RSS 約 7.3GB）", "en": "OOM killer killed api (RSS about 7.3 GB)" }
+    },
+    {
+      "id": "free",
+      "match": ["free -h", "free -m", "free"],
+      "output": "               total        used        free      shared  buff/cache   available\nMem:           7.6Gi       6.9Gi       142Mi        12Mi       580Mi       401Mi\nSwap:             0B          0B          0B"
+    },
+    {
+      "id": "ps-mem",
+      "match": ["ps aux --sort=-%mem", "ps aux --sort=-rss", "top", "top -b -n 1", "htop"],
+      "matchType": "prefix",
+      "output": "USER       PID %CPU %MEM    VSZ   RSS TTY  STAT START   TIME COMMAND\napi       9055 88.1 78.4 8102112 6118040 ?  Rsl 10:22   1:41 /opt/api/bin/api --config /etc/api/config.yaml\nroot       611  0.3  0.6 1288044 49812 ?   Ssl Sep24   9:12 /usr/bin/containerd\nroot       702  0.0  0.2  15432 18020 ?    Ss  Sep24   0:02 /usr/sbin/sshd -D",
+      "note": { "ja": "api のメモリ使用量が起動直後から増え続けている", "en": "api memory keeps growing right after start" }
+    },
+    {
+      "id": "journal-api",
+      "match": ["journalctl -u api", "journalctl -u api.service", "journalctl -xeu api"],
+      "matchType": "prefix",
+      "output": "Oct 05 10:22:01 api-01 api[9055]: config loaded: cache.max_items=5000000 cache.ttl=24h\nOct 05 10:22:01 api-01 api[9055]: warming cache from database...\nOct 05 10:24:30 api-01 api[9055]: cache warm: 2140000 items, heap=5.8GiB",
+      "note": { "ja": "起動ログに cache.max_items=5000000 が出ている", "en": "startup log shows cache.max_items=5000000" }
+    },
+    {
+      "id": "cat-config-restored",
+      "match": ["cat /etc/api/config.yaml"],
+      "when": { "config_rolled_back": true },
+      "output": "listen: 0.0.0.0:8080\ncache:\n  max_items: 50000\n  ttl: 1h\ndatabase:\n  host: db-01.example.internal"
+    },
+    {
+      "id": "cat-config",
+      "match": ["cat /etc/api/config.yaml"],
+      "output": "listen: 0.0.0.0:8080\ncache:\n  max_items: 5000000\n  ttl: 24h\ndatabase:\n  host: db-01.example.internal"
+    },
+    {
+      "id": "ls-config",
+      "match": ["ls /etc/api", "ls -l /etc/api", "ls -la /etc/api", "ll /etc/api"],
+      "output": "-rw-r--r-- 1 root root 142 Oct  5 09:40 config.yaml\n-rw-r--r-- 1 root root 138 Sep 30 18:02 config.yaml.bak"
+    },
+    {
+      "id": "diff-config",
+      "match": ["diff /etc/api/config.yaml.bak /etc/api/config.yaml", "diff /etc/api/config.yaml /etc/api/config.yaml.bak", "diff -u /etc/api/config.yaml.bak /etc/api/config.yaml"],
+      "output": "3,4c3,4\n<   max_items: 50000\n<   ttl: 1h\n---\n>   max_items: 5000000\n>   ttl: 24h",
+      "note": { "ja": "09:40 の変更でキャッシュ上限が 100 倍になっていた", "en": "the 09:40 change raised the cache limit 100x" }
+    },
+    {
+      "id": "rollback-config",
+      "match": ["cp /etc/api/config.yaml.bak /etc/api/config.yaml", "cp -p /etc/api/config.yaml.bak /etc/api/config.yaml", "cp -a /etc/api/config.yaml.bak /etc/api/config.yaml"],
+      "output": "",
+      "effects": { "config_rolled_back": true },
+      "note": { "ja": "キャッシュ設定を変更前に戻した", "en": "rolled the cache config back" }
+    },
+    {
+      "id": "restart-fixed",
+      "match": ["systemctl restart api", "systemctl restart api.service"],
+      "when": { "config_rolled_back": true },
+      "output": "",
+      "effects": { "app_stable": true },
+      "note": { "ja": "設定を戻した状態で api を再起動", "en": "restarted api with the rolled-back config" }
+    },
+    {
+      "id": "restart-again",
+      "match": ["systemctl restart api", "systemctl restart api.service"],
+      "output": "",
+      "note": { "ja": "設定はそのまま再起動 → 数分後にまた OOM", "en": "restart with the same config: OOM again within minutes" }
+    },
+    {
+      "id": "add-swap",
+      "match": ["fallocate -l 4G /swapfile", "fallocate -l 8G /swapfile", "swapon /swapfile", "mkswap /swapfile"],
+      "output": "",
+      "note": { "ja": "スワップ追加は延命策。原因は変わらず性能も悪化する", "en": "adding swap only delays the crash and hurts latency" }
+    },
+    {
+      "id": "memory-max",
+      "match": ["systemctl set-property api.service MemoryMax=2G", "systemctl set-property api MemoryMax=2G"],
+      "output": "",
+      "note": { "ja": "MemoryMax の設定はホスト全体の巻き添えを防ぐ再発防止策（単独では復旧しない）", "en": "MemoryMax protects the host (prevention, not a fix by itself)" }
+    },
+    {
+      "id": "uptime",
+      "match": ["uptime"],
+      "output": " 10:22:15 up 11 days,  4:40,  1 user,  load average: 3.91, 3.12, 2.40"
+    },
+    {
+      "id": "df",
+      "match": ["df -h", "df"],
+      "output": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p1   40G  9.1G   31G  23% /"
+    },
+    {
+      "id": "overcommit",
+      "match": ["sysctl -w vm.overcommit_memory=1", "echo 1 > /proc/sys/vm/overcommit_memory"],
+      "output": "vm.overcommit_memory = 1",
+      "danger": {
+        "penalty": 15,
+        "message": {
+          "ja": "カーネルのメモリ管理設定を障害中に変えると、OOM がホスト全体に波及する危険があります。",
+          "en": "Changing kernel memory policy mid-incident can spread the OOM to the whole host."
+        }
+      }
+    },
+    {
+      "id": "reboot",
+      "match": ["reboot", "shutdown -r now", "systemctl reboot"],
+      "output": "Connection to api-01 closed by remote host.\n... (reconnected after 80s) ...",
+      "danger": {
+        "penalty": 15,
+        "message": {
+          "ja": "再起動しても設定は同じなので、数分後にまた OOM になります。停止時間が延びるだけです。",
+          "en": "A reboot keeps the same config, so the OOM returns within minutes. It only extends the outage."
+        }
+      }
+    }
+  ],
+  "recovery": { "app_stable": true },
+  "hints": [
+    {
+      "ja": "プロセスが signal=KILL で終了しています。誰が KILL したのか、カーネルログ（dmesg）を見てみましょう。",
+      "en": "The process exits with signal=KILL. Check the kernel log (dmesg) to see who killed it."
+    },
+    {
+      "ja": "今朝の変更は何でしたか？ /etc/api に変更前のバックアップがあります。",
+      "en": "What changed this morning? There is a pre-change backup in /etc/api."
+    },
+    {
+      "ja": "再起動だけでは同じ設定でまたメモリを使い切ります。設定を戻してから再起動しましょう。",
+      "en": "Restarting alone will exhaust memory again. Roll the config back first, then restart."
+    }
+  ],
+  "rootCauses": [
+    { "id": "cache-config-change", "label": { "ja": "キャッシュ上限を 100 倍にした設定変更でメモリを使い切った", "en": "A config change raised the cache limit 100x and exhausted memory" } },
+    { "id": "code-memory-leak", "label": { "ja": "アプリケーションコードのメモリリーク", "en": "A memory leak in the application code" } },
+    { "id": "traffic-spike", "label": { "ja": "アクセス急増による負荷", "en": "A sudden traffic spike" } },
+    { "id": "host-hardware", "label": { "ja": "ホストのメモリ障害（ハードウェア）", "en": "Faulty host memory (hardware)" } }
+  ],
+  "correctRootCause": "cache-config-change",
+  "postmortem": {
+    "summary": {
+      "ja": "09:40 の設定変更で cache.max_items が 50,000 から 5,000,000 に、TTL が 1h から 24h に変更された。起動時のキャッシュウォームアップでメモリを使い切り、OOM Killer が api を強制終了。systemd の自動再起動で同じことが繰り返され、API が断続的に 503 となった。",
+      "en": "The 09:40 change raised cache.max_items from 50,000 to 5,000,000 and the TTL from 1h to 24h. Cache warm-up exhausted memory at startup, the OOM killer killed api, and systemd's auto-restart repeated the cycle, so the API returned 503 intermittently."
+    },
+    "fix": {
+      "ja": "config.yaml をバックアップから戻し、api.service を再起動した。",
+      "en": "Restored config.yaml from the backup and restarted api.service."
+    },
+    "prevention": {
+      "ja": "- キャッシュサイズ等のリソースに影響する設定変更は、ステージングで負荷試験してからリリースする\n- api.service に MemoryMax を設定し、ホスト全体への影響を防ぐ\n- OOM 発生と再起動回数を監視しアラートする",
+      "en": "- Load test resource-affecting config changes (such as cache size) in staging before release\n- Set MemoryMax on api.service so a runaway process cannot take the host down\n- Alert on OOM kills and restart counts"
+    }
+  }
+}

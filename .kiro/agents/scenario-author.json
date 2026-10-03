@@ -1,0 +1,32 @@
+{
+  "name": "scenario-author",
+  "description": "Writes new Incident Dojo scenarios under scenarios/ only, validating and dry-running them through the incident-dojo MCP server.",
+  "prompt": "file://./prompts/scenario-author.md",
+  "tools": ["read", "write", "shell", "@incident-dojo"],
+  "allowedTools": [
+    "read",
+    "@incident-dojo/list_scenarios",
+    "@incident-dojo/get_scenario",
+    "@incident-dojo/validate_scenario"
+  ],
+  "permissions": {
+    "rules": [
+      { "capability": "fs_write", "match": ["scenarios/**"], "effect": "allow" },
+      {
+        "capability": "fs_write",
+        "match": ["src/**", "tests/**", "scripts/**", "mcp-server/**", "powers/**", ".kiro/**", ".github/**", "package.json", "package-lock.json"],
+        "effect": "deny"
+      },
+      { "capability": "shell", "match": ["npm run validate*", "npm test*", "npx vitest*", "npm run -s validate*"], "effect": "allow" },
+      { "capability": "shell", "match": ["rm -rf *", "rm -fr *", "git push*", "git reset*", "sudo *"], "effect": "deny" },
+      { "capability": "mcp", "match": ["@incident-dojo/simulate_run"], "effect": "allow" }
+    ]
+  },
+  "resources": [
+    "file://.kiro/steering/**/*.md",
+    "skill://powers/incident-dojo/skills/**/SKILL.md"
+  ],
+  "includeMcpJson": true,
+  "keyboardShortcut": "ctrl+s",
+  "welcomeMessage": "シナリオ作者モードです。どんな障害シナリオを作りますか？ / Scenario author mode: what outage should we model?"
+}
